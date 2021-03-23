@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"text/template"
 	"time"
+
+	clr "github.com/logrusorgru/aurora/v3"
 )
 
 func main() {
@@ -50,20 +52,40 @@ func watch() {
 	var lastMTime time.Time
 	var err error
 	lastMTime, err = getMTime()
-	if err != nil {
-		fmt.Println("Error getting mtime for main.go! We'll try to recover.")
-	}
 
-	fmt.Println("Watching for changes...")
-	for {
-		newMTime, err := getMTime()
+	pauseAfterMtimeError := func(err error) {
 		if err != nil {
-			fmt.Println("Error getting mtime for main.go! We'll try to recover in five seconds.")
+			fmt.Println("Error getting mtime for main.go:", err, "... We'll try to recover in five seconds.")
 			time.Sleep(5 * time.Second)
 		}
+	}
+
+	pauseAfterMtimeError(err)
+
+	fmt.Println(clr.Cyan("Watching for changes..."))
+	for {
+		newMTime, err := getMTime()
+		pauseAfterMtimeError(err)
 		if newMTime.After(lastMTime) {
-			fmt.Println("Running...")
-			lastMTime = newMTime
+			fmt.Println(clr.Yellow("Running..."))
+			cmd := exec.Command("bash", "-c", `
+				clear
+				go mod tidy
+				go run .
+			`)
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			err := cmd.Run()
+			if err != nil {
+				fmt.Println(clr.Red(fmt.Sprintf("Error: %v", err)))
+			}
+
+			// Note that we don't use newMTime here because some time has passed and
+			// we want to skip over any modifications during that time rather than
+			// rerunning.
+			lastMTime, err = getMTime()
+			pauseAfterMtimeError(err)
 		}
 
 		time.Sleep(500 * time.Millisecond)
