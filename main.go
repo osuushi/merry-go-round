@@ -24,6 +24,14 @@ func main() {
 	}
 }
 
+func getMTime() (time.Time, error) {
+	stat, err := os.Stat("./main.go")
+	if err != nil {
+		return time.Time{}, err
+	}
+	return stat.ModTime(), nil
+}
+
 func watch() {
 	session := os.Getenv("MGR_SESSION")
 	if session == "" {
@@ -39,9 +47,26 @@ func watch() {
 		os.Exit(0)
 	}()
 
+	var lastMTime time.Time
+	var err error
+	lastMTime, err = getMTime()
+	if err != nil {
+		fmt.Println("Error getting mtime for main.go! We'll try to recover.")
+	}
+
+	fmt.Println("Watching for changes...")
 	for {
-		fmt.Println("Watching…")
-		time.Sleep(5 * time.Second)
+		newMTime, err := getMTime()
+		if err != nil {
+			fmt.Println("Error getting mtime for main.go! We'll try to recover in five seconds.")
+			time.Sleep(5 * time.Second)
+		}
+		if newMTime.After(lastMTime) {
+			fmt.Println("Running...")
+			lastMTime = newMTime
+		}
+
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
@@ -55,13 +80,21 @@ func tmux() {
 	scriptTemplateString := strings.Join([]string{
 		`set -ex`,
 		`cd {{.TmpDir}}`,
-		`touch main.go`,
+		`echo 'package main' > main.go`,
+		`echo >> main.go`,
+		`echo 'func main() {' >> main.go`,
+		`echo "	" >> main.go`,
+		`echo '}' >> main.go`,
 		`go mod init {{.SessionId}}`,
-		// Create the session for the editor, and set the session to be killed once the editor closes
-		`tmux new-session -d -s {{.SessionId}} "micro ./main.go; tmux kill-session -t {{.SessionId}}"`,
+
+		// Create the session for the editor, and set the session to be killed once
+		// the editor closes
+		`tmux new-session -d -s {{.SessionId}} "micro main.go +4:2; tmux kill-session -t {{.SessionId}}"`,
 		`tmux set-option mouse on`,
+
 		// Split off a the polling instance of merry-go-round
 		`tmux split-window -t {{.SessionId}} -v '{{.Self}} --watcher'`,
+		`tmux select-pane -t 0`,
 		`tmux attach-session -t {{.SessionId}}`,
 	}, "\n")
 
