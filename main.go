@@ -15,7 +15,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/logrusorgru/aurora"
 	clr "github.com/logrusorgru/aurora/v3"
+	"github.com/osuushi/merry-go-round/pipemap"
 )
 
 func main() {
@@ -35,6 +37,8 @@ func getMTime() (time.Time, error) {
 }
 
 func watch() {
+	fmt.Println(os.Getenv("TERM"))
+
 	session := os.Getenv("MGR_SESSION")
 	if session == "" {
 		log.Fatal("Cannot run --watcher outside of tmux session")
@@ -44,9 +48,10 @@ func watch() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt)
 	go func() {
-		<-sigs
-		exec.Command("tmux", "kill-session", "-t", session).Run()
-		os.Exit(0)
+		for {
+			<-sigs
+			fmt.Println(clr.Red("To stop merry-go-round, quit the micro session"))
+		}
 	}()
 
 	var lastMTime time.Time
@@ -75,10 +80,22 @@ func watch() {
 			`)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			err := cmd.Run()
-			if err != nil {
-				fmt.Println(clr.Red(fmt.Sprintf("Error: %v", err)))
+
+			stderrPipe, err := cmd.StderrPipe()
+			if err == nil {
+				stderrCh := pipemap.Strings(stderrPipe, os.Stderr, func(s string) string { return aurora.Red(s).String() })
+				err := cmd.Start()
+				if err != nil {
+					fmt.Println(clr.Red(fmt.Sprintf("Error starting: %v", err)))
+				}
+
+				<-stderrCh
+				err = cmd.Wait()
+				if err != nil {
+					fmt.Println(clr.Red(fmt.Sprintf("Error starting: %v", err)))
+				}
+			} else {
+				fmt.Println(clr.Red(fmt.Sprintf("Error piping stderr: %v", err)))
 			}
 
 			// Note that we don't use newMTime here because some time has passed and
@@ -111,8 +128,17 @@ func tmux() {
 
 		// Create the session for the editor, and set the session to be killed once
 		// the editor closes
-		`tmux new-session -d -s {{.SessionId}} "micro main.go +4:2; tmux kill-session -t {{.SessionId}}"`,
-		`tmux set-option mouse on`,
+		`tmux new-session -d -s {{.SessionId}}`,
+		`tmux set mouse on`,
+
+		// All of the internet wisdom insists that setting a terminal other than
+		// screen* or tmux* will break everything, but this is the only value I've
+		// found where ctrl-arrow and shift-home/end work properly in micro, and
+		// which has a terminal definition. "screen+fkeys" also works, at least in
+		// iTerm, but is more obscure.
+		`tmux set default-terminal 'xterm-256color'`,
+		`tmux split-window "micro main.go +4:2; tmux kill-session -t {{.SessionId}}"`,
+		`tmux kill-pane -t 0`,
 
 		// Split off a the polling instance of merry-go-round
 		`tmux split-window -t {{.SessionId}} -v '{{.Self}} --watcher'`,
