@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"text/template"
@@ -111,7 +110,7 @@ func watch() {
 
 func tmux() {
 	sessionId := generateSessionId()
-	self, err := filepath.Abs(os.Args[0])
+	self, err := os.Executable()
 	if err != nil {
 		log.Fatal("Getting absolute path to merry-go-round: ", err)
 	}
